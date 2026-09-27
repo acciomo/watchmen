@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import Image from 'next/image';
 import { useRouter } from "next/navigation";
 import { getImageURL, Movie, getMovieVideos, getMovieById, MovieDetails } from "../API/TMDB";
@@ -79,52 +79,55 @@ const HorizontalMovieCard: React.FC<Props> = ({ movies, className = "" }) => {
     }, [movies.length, handleNext, showTrailer]);
 
     // Swipe Support
-    const [touchStart, setTouchStart] = useState<number | null>(null);
-    const [touchEnd, setTouchEnd] = useState<number | null>(null);
-
     const minSwipeDistance = 50;
+    const clickTolerance = 10;
+    const dragStartX = useRef<number | null>(null);
+    const dragDeltaX = useRef(0);
+    const didDrag = useRef(false);
 
-    const onTouchStart = (e: React.TouchEvent | React.MouseEvent) => {
+    const getClientX = (e: React.TouchEvent | React.MouseEvent) =>
+        'touches' in e ? e.touches[0].clientX : e.clientX;
+
+    const onDragStart = (e: React.TouchEvent | React.MouseEvent) => {
         if (showTrailer) return;
-        setTouchEnd(null);
-        if ('touches' in e) {
-            setTouchStart(e.targetTouches[0].clientX);
-        } else {
-            setTouchStart((e as React.MouseEvent).clientX);
-        }
+        dragStartX.current = getClientX(e);
+        dragDeltaX.current = 0;
+        didDrag.current = false;
     };
 
-    const onTouchMove = (e: React.TouchEvent | React.MouseEvent) => {
-        if ('touches' in e) {
-            setTouchEnd(e.targetTouches[0].clientX);
-        } else {
-            setTouchEnd((e as React.MouseEvent).clientX);
-        }
+    const onDragMove = (e: React.TouchEvent | React.MouseEvent) => {
+        if (dragStartX.current === null) return;
+        dragDeltaX.current = getClientX(e) - dragStartX.current;
+        if (Math.abs(dragDeltaX.current) > clickTolerance) didDrag.current = true;
     };
 
-    const onTouchEnd = () => {
-        if (!touchStart || !touchEnd) return;
-        const distance = touchStart - touchEnd;
-        const isLeftSwipe = distance > minSwipeDistance;
-        const isRightSwipe = distance < -minSwipeDistance;
-
-        if (isLeftSwipe) {
+    const onDragEnd = () => {
+        if (dragStartX.current === null) return;
+        dragStartX.current = null;
+        if (dragDeltaX.current < -minSwipeDistance) {
             handleNext();
-        } else if (isRightSwipe) {
+        } else if (dragDeltaX.current > minSwipeDistance) {
             handlePrev();
         }
+    };
+
+    // Click only fires on the details container when the press started and was released inside it
+    const handleDetailsClick = (e: React.MouseEvent, id: number) => {
+        if (didDrag.current) return;
+        if ((e.target as HTMLElement).closest('a')) return; // rating links open in a new tab
+        handleMoreClick(id);
     };
 
     return (
         <div
             className={`relative w-full h-screen overflow-hidden bg-black group ${className}`}
-            onTouchStart={onTouchStart}
-            onTouchMove={onTouchMove}
-            onTouchEnd={onTouchEnd}
-            onMouseDown={onTouchStart}
-            onMouseMove={onTouchMove}
-            onMouseUp={onTouchEnd}
-            onMouseLeave={onTouchEnd}
+            onTouchStart={onDragStart}
+            onTouchMove={onDragMove}
+            onTouchEnd={onDragEnd}
+            onMouseDown={onDragStart}
+            onMouseMove={onDragMove}
+            onMouseUp={onDragEnd}
+            onMouseLeave={onDragEnd}
         >
             {/* Carousel Track */}
             <div
@@ -136,11 +139,7 @@ const HorizontalMovieCard: React.FC<Props> = ({ movies, className = "" }) => {
                     const posterUrl = movie.poster_path ? getImageURL(movie.poster_path, 'mid') : '';
 
                     return (
-                        <div
-                            key={movie.id}
-                            onClick={() => handleMoreClick(movie.id)}
-                            className="relative min-w-full h-full select-none cursor-pointer"
-                        >
+                        <div key={movie.id} className="relative min-w-full h-full select-none">
                             {/* Background Image - Mobile (Poster) */}
                             {posterUrl && (
                                 <div className="absolute inset-0 block md:hidden">
@@ -188,7 +187,10 @@ const HorizontalMovieCard: React.FC<Props> = ({ movies, className = "" }) => {
                                     </div>
 
                                     {/* Text Details */}
-                                    <div className="text-white max-w-2xl mb-4 md:mb-0 pointer-events-auto">
+                                    <div
+                                        className="text-white max-w-2xl mb-4 md:mb-0 pointer-events-auto cursor-pointer"
+                                        onClick={(e) => handleDetailsClick(e, movie.id)}
+                                    >
                                         <h1 className="text-3xl sm:text-4xl md:text-6xl lg:text-7xl font-bold leading-tight mb-2 md:mb-4 tracking-tight drop-shadow-lg">
                                             {movie.title}
                                         </h1>
@@ -238,7 +240,7 @@ const HorizontalMovieCard: React.FC<Props> = ({ movies, className = "" }) => {
                                         <div className="flex w-full justify-end md:justify-start gap-4">
                                             {trailerKey && (
                                                 <Button
-                                                    onClick={(e) => { e.stopPropagation(); handleTrailerClick(); }}
+                                                    onClick={(e) => { e.stopPropagation(); if (!didDrag.current) handleTrailerClick(); }}
                                                     variant="secondary"
                                                     size="md"
                                                     className="rounded-full backdrop-blur-md border-white/20 bg-white/10 hover:bg-white/20"
@@ -253,7 +255,6 @@ const HorizontalMovieCard: React.FC<Props> = ({ movies, className = "" }) => {
                                                 </Button>
                                             )}
                                             <Button
-                                                onClick={(e) => { e.stopPropagation(); handleMoreClick(movie.id); }}
                                                 variant="secondary"
                                                 size="md"
                                                 className="hidden md:inline-flex"
